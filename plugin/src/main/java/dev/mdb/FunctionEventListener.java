@@ -107,10 +107,8 @@ public class FunctionEventListener implements Listener {
 
         session.onFunctionEnter(functionId);
 
-        // Phase 3: instrument the function
-        if (nmsReady) {
-            instrumentFunction(functionId);
-        }
+        // Phase 3 instrumentation is handled at load time by FunctionLibraryPatcher;
+        // nothing to do here at call time.
     }
 
     private void instrumentFunction(String functionId) {
