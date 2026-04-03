@@ -7,3 +7,5 @@ target/
 *.jar
 !plugin/src/
 build/
+plugin/.gradle/
+plugin/build/
