@@ -20,6 +20,9 @@ public class MdbPlugin extends JavaPlugin {
 
         session = new DebugSession(this, host, port, timeout, traceAll);
 
+        // Init scoreboard reader (needs to run on main thread after world load)
+        getServer().getScheduler().runTask(this, session::initScoreboardReader);
+
         // Phase 1: Use Bukkit event listener to intercept /function commands
         getServer().getPluginManager().registerEvents(new FunctionEventListener(session, getLogger()), this);
         getLogger().info("[mdb] FunctionEventListener registered.");
@@ -98,7 +101,26 @@ public class MdbPlugin extends JavaPlugin {
                 if (session != null) session.disconnect();
                 sender.sendMessage("[mdb] Disconnected.");
             }
-            default -> sender.sendMessage("[mdb] Unknown subcommand: " + args[0]);
+            case "repatch" -> {
+                sender.sendMessage("[mdb] Re-patching function library...");
+                getServer().getScheduler().runTask(this, () -> {
+                    try {
+                        Object craftServer = getServer();
+                        Object nmsServer = craftServer.getClass().getMethod("getServer").invoke(craftServer);
+                        Object functionManager = findField(nmsServer, "functionManager");
+                        if (functionManager != null) {
+                            FunctionLibraryPatcher patcher = new FunctionLibraryPatcher(session, getLogger());
+                            int n = patcher.patchLibrary(functionManager);
+                            sender.sendMessage("[mdb] Patched " + n + " functions.");
+                        } else {
+                            sender.sendMessage("[mdb] §cCould not find functionManager.");
+                        }
+                    } catch (Exception e) {
+                        sender.sendMessage("[mdb] §cRepatch failed: " + e.getMessage());
+                    }
+                });
+            }
+            default -> sender.sendMessage("[mdb] Unknown subcommand: " + args[0] + ". Use: status|connect|disconnect|repatch");
         }
         return true;
     }

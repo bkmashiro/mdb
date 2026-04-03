@@ -40,7 +40,10 @@ export class DebugServer {
         const json = data.toString()
         try {
           const msg = JSON.parse(json)
-          console.log('[plugin→]', JSON.stringify(msg))
+          // Log only interesting events (skip high-frequency cmd traces)
+          if (!['cmdTrace'].includes(msg.type)) {
+            console.log('[plugin→]', JSON.stringify(msg))
+          }
           // Forward to all connected clients
           this.broadcastToClients(json)
         } catch (e) {
@@ -111,6 +114,8 @@ export class DebugServer {
       }
       case 'step':
       case 'continue':
+      case 'print':
+      case 'listObjectives':
         // Forward directly to plugin
         this.sendToPlugin(msg)
         break

@@ -23,6 +23,7 @@ public class DebugSession {
     private final int breakpointTimeoutSeconds;
     private final boolean traceAll;
     private final Gson gson = new Gson();
+    private ScoreboardReader scoreboardReader;
 
     // breakpoints: "namespace:path/to/func" -> set of line numbers (1-indexed)
     private final Map<String, Set<Integer>> breakpoints = new ConcurrentHashMap<>();
@@ -41,6 +42,10 @@ public class DebugSession {
         this.port = port;
         this.breakpointTimeoutSeconds = timeoutSeconds;
         this.traceAll = traceAll;
+    }
+
+    public void initScoreboardReader() {
+        scoreboardReader = new ScoreboardReader(plugin.getLogger());
     }
 
     public void connect() {
@@ -153,11 +158,60 @@ public class DebugSession {
                     if (lines != null) lines.remove(line);
                 }
                 case "clearAllBreakpoints" -> breakpoints.clear();
+
+                case "print" -> {
+                    // print <objective> [entry]
+                    String objective = msg.has("objective") ? msg.get("objective").getAsString() : null;
+                    String entry = msg.has("entry") ? msg.get("entry").getAsString() : null;
+                    handlePrint(objective, entry);
+                }
+
+                case "listObjectives" -> {
+                    if (scoreboardReader != null) {
+                        var names = scoreboardReader.listObjectives();
+                        JsonObject resp = new JsonObject();
+                        resp.addProperty("type", "objectives");
+                        var arr = new com.google.gson.JsonArray();
+                        names.forEach(arr::add);
+                        resp.add("objectives", arr);
+                        sendRaw(gson.toJson(resp));
+                    }
+                }
+
                 default -> plugin.getLogger().warning("[mdb] Unknown server message type: " + type);
             }
         } catch (Exception e) {
             plugin.getLogger().warning("[mdb] Failed to parse server message: " + e.getMessage());
         }
+    }
+
+    // ── Print / scoreboard helpers ──────────────────────────────────────────
+
+    private void handlePrint(String objective, String entry) {
+        if (scoreboardReader == null) {
+            sendRaw("{\"type\":\"printResult\",\"error\":\"ScoreboardReader not initialized\"}");
+            return;
+        }
+        JsonObject resp = new JsonObject();
+        resp.addProperty("type", "printResult");
+        if (objective == null) {
+            resp.addProperty("error", "objective required");
+        } else if (entry != null) {
+            // Single score
+            Integer val = scoreboardReader.readScore(objective, entry);
+            resp.addProperty("objective", objective);
+            resp.addProperty("entry", entry);
+            if (val != null) resp.addProperty("value", val);
+            else resp.addProperty("error", "not set");
+        } else {
+            // All scores for objective
+            Map<String, Integer> scores = scoreboardReader.readObjective(objective);
+            resp.addProperty("objective", objective);
+            JsonObject scoresObj = new JsonObject();
+            scores.forEach(scoresObj::addProperty);
+            resp.add("scores", scoresObj);
+        }
+        sendRaw(gson.toJson(resp));
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

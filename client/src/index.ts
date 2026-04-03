@@ -70,6 +70,35 @@ class MdbClient {
         }
         break
 
+      case 'printResult': {
+        if (msg.error) {
+          console.log(`\n  [print] Error: ${msg.error}`)
+        } else if (msg.entry !== undefined) {
+          console.log(`\n  ${msg.objective}[${msg.entry}] = ${msg.value ?? '(not set)'}`)
+        } else {
+          const scores = msg.scores as Record<string, number>
+          const entries = Object.entries(scores).sort(([a], [b]) => a.localeCompare(b))
+          if (entries.length === 0) {
+            console.log(`\n  [print] ${msg.objective}: (empty)`)
+          } else {
+            console.log(`\n  ${msg.objective}:`)
+            for (const [k, v] of entries) {
+              console.log(`    ${k.padEnd(32)} = ${v}`)
+            }
+          }
+        }
+        this.rl.prompt()
+        break
+      }
+
+      case 'objectives': {
+        const objs = msg.objectives as string[]
+        console.log(`\n  Objectives (${objs.length}):`)
+        objs.forEach(o => console.log(`    ${o}`))
+        this.rl.prompt()
+        break
+      }
+
       case 'pluginDisconnected':
         console.log('[mdb] ⚠ Plugin disconnected from server')
         break
@@ -123,13 +152,13 @@ class MdbClient {
       case 'help':
         console.log(`
 Commands:
-  break <function> <line>   Set a breakpoint  (e.g. break my_pack:tick 5)
-  clear <function> <line>   Clear a breakpoint
+  break <fn> <line>         Set a breakpoint   e.g. break my_pack:tick 5
+  clear <fn> <line>         Clear a breakpoint
   clearall                  Clear all breakpoints
   continue / c              Resume execution
-  step / s                  Step to next command
-  print <scoreboard_name>   (planned) Show scoreboard value
-  bt                        (planned) Show call stack
+  step / s                  Step to next command (pause after each line)
+  print / p <obj> [entry]   Print scoreboard    e.g. print mdb_test $x
+  objectives / obj          List all scoreboard objectives
   status                    Show connection status
   quit / q                  Exit
 `)
@@ -172,6 +201,23 @@ Commands:
       case 's':
         this.send({ type: 'step' })
         this.paused = false
+        break
+
+      case 'print':
+      case 'p': {
+        // print <objective> [entry]
+        // e.g.: print mdb_test        -> all scores
+        //       print mdb_test $x     -> single entry
+        if (parts.length < 2) { console.log('Usage: print <objective> [entry]'); break }
+        const msg: any = { type: 'print', objective: parts[1] }
+        if (parts[2]) msg.entry = parts[2]
+        this.send(msg)
+        break
+      }
+
+      case 'objectives':
+      case 'obj':
+        this.send({ type: 'listObjectives' })
         break
 
       case 'status':
