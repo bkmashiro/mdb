@@ -32,7 +32,7 @@ public class DebugSession {
     // watchpoints
     private final WatchList watchList = new WatchList();
 
-    // pause latch — non-null when paused
+    // pause latch - non-null when paused
     private final AtomicReference<CountDownLatch> pauseLatch = new AtomicReference<>(null);
 
     // step mode: pause after every command
@@ -66,7 +66,7 @@ public class DebugSession {
     public void connect() {
         try {
             URI uri = new URI("ws://" + host + ":" + port + "/plugin");
-            wsClient = new PluginWebSocketClient(uri, this, plugin.getLogger());
+            wsClient = new PluginWebSocketClient(uri, this, plugin, plugin.getLogger());
             wsClient.connectBlocking(3, TimeUnit.SECONDS);
         } catch (Exception e) {
             plugin.getLogger().warning("[mdb] Could not connect: " + e.getMessage());
@@ -75,7 +75,7 @@ public class DebugSession {
 
     public void disconnect() {
         if (wsClient != null) {
-            try { wsClient.closeBlocking(); } catch (Exception ignored) {}
+            wsClient.closeIntentionally();
         }
         resume();
     }
@@ -115,7 +115,7 @@ public class DebugSession {
     }
 
     /**
-     * Called AFTER each command executes — check watchpoints.
+     * Called AFTER each command executes - check watchpoints.
      */
     public void onAfterCommand(String functionId, int line, String command,
                                 Map<String, Integer> ignored) {
@@ -194,7 +194,7 @@ public class DebugSession {
                 resumed = latch.await(breakpointTimeoutSeconds, TimeUnit.SECONDS);
             }
             if (!resumed) {
-                plugin.getLogger().warning("[mdb] Breakpoint timeout (" + breakpointTimeoutSeconds + "s) — auto-resuming.");
+                plugin.getLogger().warning("[mdb] Breakpoint timeout (" + breakpointTimeoutSeconds + "s) - auto-resuming.");
                 stepping = false;
             }
         } catch (InterruptedException e) {

@@ -59,36 +59,34 @@ export function App() {
   return (
     <div style={s.app}>
       <Header state={state} actions={actions} tab={tab} setTab={setTab} />
-      {tab === 'explorer' ? (
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <FileExplorer
-            breakpoints={state.breakpoints}
-            onSetBreakpoint={actions.setBreakpoint}
-            onClearBreakpoint={actions.clearBreakpoint}
-            currentLocation={state.location}
-          />
+      {/* Keep both panels mounted — toggle visibility to preserve state */}
+      <div style={{ flex: 1, overflow: 'hidden', display: tab === 'explorer' ? 'flex' : 'none', flexDirection: 'column' }}>
+        <FileExplorer
+          breakpoints={state.breakpoints}
+          onSetBreakpoint={actions.setBreakpoint}
+          onClearBreakpoint={actions.clearBreakpoint}
+          currentLocation={state.location}
+        />
+      </div>
+      <div style={{ ...s.body, display: tab === 'debug' ? 'grid' : 'none' }}>
+        <div style={{ ...s.cell, gridColumn: 1, gridRow: 1 }}>
+          <SourceViewer state={state} actions={actions} />
         </div>
-      ) : (
-        <div style={s.body}>
-          <div style={{ ...s.cell, gridColumn: 1, gridRow: 1 }}>
-            <SourceViewer state={state} actions={actions} />
-          </div>
-          <div style={{ ...s.cell, gridColumn: 2, gridRow: 1 }}>
-            <ScoreboardPanel state={state} actions={actions} />
-          </div>
-          <div style={{ ...s.cell, gridColumn: 3, gridRow: '1 / 3' }}>
-            <BreakpointPanel state={state} actions={actions} />
-            <WatchPanel state={state} actions={actions} />
-          </div>
-          <div style={{ ...s.cell, gridColumn: 1, gridRow: 2 }}>
-            <StoragePanel state={state} actions={actions} />
-          </div>
-          <div style={{ ...s.cell, gridColumn: 2, gridRow: 2, overflow: 'hidden' }}>
-            <EventLog logs={state.eventLog} logRef={logRef} />
-            <CommandBar actions={actions} />
-          </div>
+        <div style={{ ...s.cell, gridColumn: 2, gridRow: 1 }}>
+          <ScoreboardPanel state={state} actions={actions} />
         </div>
-      )}
+        <div style={{ ...s.cell, gridColumn: 3, gridRow: '1 / 3' }}>
+          <BreakpointPanel state={state} actions={actions} />
+          <WatchPanel state={state} actions={actions} />
+        </div>
+        <div style={{ ...s.cell, gridColumn: 1, gridRow: 2 }}>
+          <StoragePanel state={state} actions={actions} />
+        </div>
+        <div style={{ ...s.cell, gridColumn: 2, gridRow: 2, overflow: 'hidden' }}>
+          <EventLog logs={state.eventLog} logRef={logRef} />
+          <CommandBar actions={actions} />
+        </div>
+      </div>
     </div>
   )
 }
