@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useMdbClient } from './useMdbClient'
 import type { ScoreEntry } from './useMdbClient'
+import { FileExplorer } from './FileExplorer'
 
 const WS_URL = `ws://${window.location.hostname}:2526/client`
 
@@ -41,54 +42,80 @@ const s = {
 export function App() {
   const { state, actions } = useMdbClient(WS_URL)
   const logRef = useRef<HTMLDivElement>(null)
+  const [tab, setTab] = useState<'debug' | 'explorer'>('explorer')
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [state.eventLog])
 
-  // When paused, auto-refresh top-level scoreboard objectives
   useEffect(() => {
     if (state.paused && state.pluginConnected) {
       actions.listObjectives()
+      // Switch to debug tab when paused
+      setTab('debug')
     }
   }, [state.paused])
 
   return (
     <div style={s.app}>
-      <Header state={state} actions={actions} />
-      <div style={s.body}>
-        {/* Row 1: Source Viewer | Scoreboard | Breakpoints+Watches */}
-        <div style={{ ...s.cell, gridColumn: 1, gridRow: 1 }}>
-          <SourceViewer state={state} actions={actions} />
+      <Header state={state} actions={actions} tab={tab} setTab={setTab} />
+      {tab === 'explorer' ? (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <FileExplorer
+            breakpoints={state.breakpoints}
+            onSetBreakpoint={actions.setBreakpoint}
+            onClearBreakpoint={actions.clearBreakpoint}
+            currentLocation={state.location}
+          />
         </div>
-        <div style={{ ...s.cell, gridColumn: 2, gridRow: 1 }}>
-          <ScoreboardPanel state={state} actions={actions} />
+      ) : (
+        <div style={s.body}>
+          <div style={{ ...s.cell, gridColumn: 1, gridRow: 1 }}>
+            <SourceViewer state={state} actions={actions} />
+          </div>
+          <div style={{ ...s.cell, gridColumn: 2, gridRow: 1 }}>
+            <ScoreboardPanel state={state} actions={actions} />
+          </div>
+          <div style={{ ...s.cell, gridColumn: 3, gridRow: '1 / 3' }}>
+            <BreakpointPanel state={state} actions={actions} />
+            <WatchPanel state={state} actions={actions} />
+          </div>
+          <div style={{ ...s.cell, gridColumn: 1, gridRow: 2 }}>
+            <StoragePanel state={state} actions={actions} />
+          </div>
+          <div style={{ ...s.cell, gridColumn: 2, gridRow: 2, overflow: 'hidden' }}>
+            <EventLog logs={state.eventLog} logRef={logRef} />
+            <CommandBar actions={actions} />
+          </div>
         </div>
-        <div style={{ ...s.cell, gridColumn: 3, gridRow: '1 / 3' }}>
-          <BreakpointPanel state={state} actions={actions} />
-          <WatchPanel state={state} actions={actions} />
-        </div>
-        {/* Row 2: Storage NBT Tree | Event Log + Command */}
-        <div style={{ ...s.cell, gridColumn: 1, gridRow: 2 }}>
-          <StoragePanel state={state} actions={actions} />
-        </div>
-        <div style={{ ...s.cell, gridColumn: 2, gridRow: 2, overflow: 'hidden' }}>
-          <EventLog logs={state.eventLog} logRef={logRef} />
-          <CommandBar actions={actions} />
-        </div>
-      </div>
+      )}
     </div>
   )
 }
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ state, actions }: any) {
+function Header({ state, actions, tab, setTab }: any) {
   return (
     <div style={s.header}>
       <span style={{ ...s.tag(C.purple), fontWeight: 700, fontSize: 13 }}>⚙ mdb</span>
       <span style={s.badge(state.connected)}>server {state.connected ? 'ok' : 'offline'}</span>
       <span style={s.badge(state.pluginConnected)}>plugin {state.pluginConnected ? 'ok' : 'offline'}</span>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 2, marginLeft: 8, background: '#010409', borderRadius: 4, padding: 2 }}>
+        {(['explorer', 'debug'] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)} style={{
+            background: tab === t ? C.panel : 'transparent',
+            border: tab === t ? `1px solid ${C.border}` : '1px solid transparent',
+            borderRadius: 3, color: tab === t ? C.text : C.muted,
+            padding: '2px 10px', cursor: 'pointer', fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+          }}>
+            {t === 'explorer' ? '📁 Explorer' : '🔐 Debug'}
+          </button>
+        ))}
+      </div>
+
       {state.paused && (
         <>
           <span style={{ color: C.yellow, marginLeft: 4, fontSize: 11 }}>
