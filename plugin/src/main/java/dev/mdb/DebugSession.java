@@ -42,6 +42,8 @@ public class DebugSession {
     private ScoreboardReader scoreboardReader;
     // storage/NBT reader
     private StorageReader storageReader;
+    // mcfunction source reader
+    private FunctionSourceReader sourceReader;
 
     private PluginWebSocketClient wsClient;
 
@@ -58,6 +60,7 @@ public class DebugSession {
     public void initScoreboardReader() {
         scoreboardReader = new ScoreboardReader(plugin.getLogger());
         storageReader = new StorageReader(plugin.getLogger());
+        sourceReader = new FunctionSourceReader(plugin.getLogger());
     }
 
     public void connect() {
@@ -167,6 +170,16 @@ public class DebugSession {
         }
         msg.add("stack", stackArr);
 
+        // Attach source lines for the current function
+        if (sourceReader != null) {
+            FunctionSourceReader.SourceResult src = sourceReader.getSource(functionId);
+            if (src.ok) {
+                JsonArray lines = new JsonArray();
+                src.lines.forEach(lines::add);
+                msg.add("source", lines);
+            }
+        }
+
         sendRaw(gson.toJson(msg));
 
         // Block MC main thread
@@ -252,6 +265,11 @@ public class DebugSession {
                     handleListStorage();
                 }
 
+                case "getSource" -> {
+                    String fnId = msg.has("function") ? msg.get("function").getAsString() : null;
+                    handleGetSource(fnId);
+                }
+
                 default -> plugin.getLogger().warning("[mdb] Unknown message type: " + type);
             }
         } catch (Exception e) {
@@ -287,6 +305,25 @@ public class DebugSession {
             JsonArray arr = new JsonArray();
             storageReader.listKeys().forEach(arr::add);
             resp.add("keys", arr);
+        }
+        sendRaw(gson.toJson(resp));
+    }
+
+    private void handleGetSource(String functionId) {
+        JsonObject resp = new JsonObject();
+        resp.addProperty("type", "source");
+        if (functionId == null || sourceReader == null) {
+            resp.addProperty("error", "function required");
+        } else {
+            FunctionSourceReader.SourceResult src = sourceReader.getSource(functionId);
+            resp.addProperty("function", functionId);
+            if (src.ok) {
+                JsonArray lines = new JsonArray();
+                src.lines.forEach(lines::add);
+                resp.add("lines", lines);
+            } else {
+                resp.addProperty("error", src.error);
+            }
         }
         sendRaw(gson.toJson(resp));
     }

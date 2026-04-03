@@ -30,6 +30,11 @@ export interface WatchHit {
   location: Location
 }
 
+export interface ScoreEntry {
+  entry: string
+  value: number
+}
+
 export interface DebugState {
   connected: boolean
   pluginConnected: boolean
@@ -40,6 +45,14 @@ export interface DebugState {
   breakpoints: Breakpoint[]
   watches: Watch[]
   eventLog: string[]
+  // source viewer
+  sourceFunction: string | null
+  sourceLines: string[]
+  // scoreboard
+  scoreboardData: Record<string, ScoreEntry[]>  // objective -> entries
+  // storage
+  lastStorageId: string | null
+  lastStorageValue: string | null
 }
 
 const MAX_LOG = 200
@@ -56,6 +69,11 @@ export function useMdbClient(wsUrl: string) {
     breakpoints: [],
     watches: [],
     eventLog: [],
+    sourceFunction: null,
+    sourceLines: [],
+    scoreboardData: {},
+    lastStorageId: null,
+    lastStorageValue: null,
   })
 
   const log = useCallback((msg: string) => {
@@ -137,8 +155,19 @@ export function useMdbClient(wsUrl: string) {
             reason: msg.reason,
             location: msg.location,
             stack: msg.stack ?? [],
+            // If source is attached, update source viewer
+            sourceFunction: msg.source ? msg.location.function : s.sourceFunction,
+            sourceLines: msg.source ?? s.sourceLines,
           }))
           log(`⏸ ${msg.reason} at ${msg.location.function}:${msg.location.line} — ${msg.location.command}`)
+          break
+
+        case 'source':
+          if (!msg.error) {
+            setState(s => ({ ...s, sourceFunction: msg.function, sourceLines: msg.lines ?? [] }))
+          } else {
+            log(`source error: ${msg.error}`)
+          }
           break
 
         case 'watchHit':
@@ -150,17 +179,33 @@ export function useMdbClient(wsUrl: string) {
             log(`print error: ${msg.error}`)
           } else if (msg.entry !== undefined) {
             log(`${msg.objective}[${msg.entry}] = ${msg.value ?? '(unset)'}`)
+            // Update scoreboard panel
+            setState(s => {
+              const prev = s.scoreboardData[msg.objective] ?? []
+              const filtered = prev.filter(e => e.entry !== msg.entry)
+              const next = msg.value != null
+                ? [...filtered, { entry: msg.entry, value: msg.value }]
+                : filtered
+              next.sort((a, b) => a.entry.localeCompare(b.entry))
+              return { ...s, scoreboardData: { ...s.scoreboardData, [msg.objective]: next } }
+            })
           } else {
-            const entries = Object.entries(msg.scores ?? {})
-              .map(([k, v]) => `${k}=${v}`)
-              .join(', ')
-            log(`${msg.objective}: {${entries}}`)
+            // Full objective dump
+            const entries: ScoreEntry[] = Object.entries(msg.scores ?? {})
+              .map(([entry, value]) => ({ entry, value: value as number }))
+            entries.sort((a, b) => a.entry.localeCompare(b.entry))
+            log(`${msg.objective}: ${entries.length} entries`)
+            setState(s => ({ ...s, scoreboardData: { ...s.scoreboardData, [msg.objective]: entries } }))
           }
           break
 
         case 'storageResult':
-          if (msg.error) log(`storage error: ${msg.error}`)
-          else log(`storage ${msg.id}${msg.path ? '.' + msg.path : ''}: ${msg.value}`)
+          if (msg.error) {
+            log(`storage error: ${msg.error}`)
+          } else {
+            log(`storage ${msg.id}${msg.path ? '.' + msg.path : ''}: loaded`)
+            setState(s => ({ ...s, lastStorageId: msg.id, lastStorageValue: msg.value ?? null }))
+          }
           break
 
         case 'storageList':
@@ -225,6 +270,7 @@ export function useMdbClient(wsUrl: string) {
     storage: (id: string, path?: string) => send({ type: 'storage', id, path: path ?? '' }),
     listStorage: () => send({ type: 'listStorage' }),
     listObjectives: () => send({ type: 'listObjectives' }),
+    getSource: (fn: string) => send({ type: 'getSource', function: fn }),
     raw: send,
   }
 

@@ -148,6 +148,7 @@ export class DebugServer {
       case 'listObjectives':
       case 'storage':
       case 'listStorage':
+      case 'getSource':
         // Forward directly to plugin
         this.sendToPlugin(msg)
         break
