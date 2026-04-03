@@ -40,6 +40,8 @@ public class DebugSession {
 
     // scoreboard reader (init after world load)
     private ScoreboardReader scoreboardReader;
+    // storage/NBT reader
+    private StorageReader storageReader;
 
     private PluginWebSocketClient wsClient;
 
@@ -55,6 +57,7 @@ public class DebugSession {
 
     public void initScoreboardReader() {
         scoreboardReader = new ScoreboardReader(plugin.getLogger());
+        storageReader = new StorageReader(plugin.getLogger());
     }
 
     public void connect() {
@@ -238,11 +241,54 @@ public class DebugSession {
                     }
                 }
 
+                case "storage" -> {
+                    // storage <id> [path]
+                    String storageId = msg.has("id") ? msg.get("id").getAsString() : null;
+                    String path = msg.has("path") ? msg.get("path").getAsString() : "";
+                    handleStorage(storageId, path);
+                }
+
+                case "listStorage" -> {
+                    handleListStorage();
+                }
+
                 default -> plugin.getLogger().warning("[mdb] Unknown message type: " + type);
             }
         } catch (Exception e) {
             plugin.getLogger().warning("[mdb] Failed to parse server message: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    // ── Storage / NBT ──────────────────────────────────────────────────
+
+    private void handleStorage(String storageId, String path) {
+        JsonObject resp = new JsonObject();
+        resp.addProperty("type", "storageResult");
+        if (storageId == null) {
+            resp.addProperty("error", "id required");
+        } else if (storageReader == null) {
+            resp.addProperty("error", "StorageReader not ready");
+        } else {
+            StorageReader.StorageResult result = storageReader.read(storageId, path);
+            resp.addProperty("id", storageId);
+            resp.addProperty("path", path != null ? path : "");
+            if (result.ok) resp.addProperty("value", result.value);
+            else resp.addProperty("error", result.error);
+        }
+        sendRaw(gson.toJson(resp));
+    }
+
+    private void handleListStorage() {
+        JsonObject resp = new JsonObject();
+        resp.addProperty("type", "storageList");
+        if (storageReader == null) {
+            resp.addProperty("error", "StorageReader not ready");
+        } else {
+            JsonArray arr = new JsonArray();
+            storageReader.listKeys().forEach(arr::add);
+            resp.add("keys", arr);
+        }
+        sendRaw(gson.toJson(resp));
     }
 
     // ── Print / scoreboard ────────────────────────────────────────────────────

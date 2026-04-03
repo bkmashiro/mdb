@@ -135,6 +135,31 @@ class MdbClient {
         break
       }
 
+      case 'storageResult': {
+        if (msg.error) {
+          console.log(`\n  [storage] Error: ${msg.error}`)
+        } else {
+          const pathStr = msg.path ? `.${msg.path}` : ''
+          console.log(`\n  ${msg.id}${pathStr}:`)
+          // Pretty-print SNBT
+          console.log('  ' + (msg.value ?? '(empty)').replace(/,/g, ',\n  '))
+        }
+        this.rl.prompt()
+        break
+      }
+
+      case 'storageList': {
+        if (msg.error) {
+          console.log(`\n  [storage] Error: ${msg.error}`)
+        } else {
+          const keys = msg.keys as string[]
+          console.log(`\n  Storage keys (${keys.length}):`)
+          keys.forEach(k => console.log(`    ${k}`))
+        }
+        this.rl.prompt()
+        break
+      }
+
       default:
         // Unknown — show raw JSON quietly
         if (!['functionEnter','functionExit'].includes(msg.type)) {
@@ -173,6 +198,8 @@ Commands:
   watch / w  <obj> <entry>  Watch for changes   watch mdb_test \\$x
   unwatch    <obj> <entry>  Remove watch
   unwatchall                Remove all watches
+  storage / nbt <id> [path] Read NBT storage   storage my_pack:data foo.bar
+  storage list              List all storage namespaces
   objectives / obj          List objectives
   status                    Connection status
   quit / q                  Exit
@@ -254,6 +281,21 @@ Commands:
       case 'objectives': case 'obj':
         this.send({ type: 'listObjectives' })
         break
+
+      case 'storage': case 'nbt': {
+        // storage <id> [path]     e.g. storage my_pack:data player.health
+        // storage list            list all storage keys
+        if (parts[1] === 'list' || parts[1] === 'ls') {
+          this.send({ type: 'listStorage' })
+        } else if (parts.length < 2) {
+          console.log('Usage: storage <namespace:key> [path]  |  storage list')
+        } else {
+          const msg: any = { type: 'storage', id: parts[1] }
+          if (parts[2]) msg.path = parts.slice(2).join('.')
+          this.send(msg)
+        }
+        break
+      }
 
       case 'status':
         console.log(`Connected: ${this.connected}`)
