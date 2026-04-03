@@ -19,13 +19,9 @@ public class MdbPlugin extends JavaPlugin {
 
         session = new DebugSession(this, host, port, timeout, traceAll);
 
-        // Hook into the function manager
-        FunctionManagerHook hook = new FunctionManagerHook(this, session);
-        if (hook.install()) {
-            getLogger().info("[mdb] FunctionManager hook installed successfully.");
-        } else {
-            getLogger().severe("[mdb] Failed to hook FunctionManager — debugging will not work.");
-        }
+        // Phase 1: Use Bukkit event listener to intercept /function commands
+        getServer().getPluginManager().registerEvents(new FunctionEventListener(session), this);
+        getLogger().info("[mdb] FunctionEventListener registered.");
 
         // Connect to debug server (non-blocking)
         session.connect();

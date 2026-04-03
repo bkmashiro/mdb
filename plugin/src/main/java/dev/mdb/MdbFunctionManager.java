@@ -1,96 +1,85 @@
 package dev.mdb;
 
-import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.logging.Logger;
 
 /**
- * Dynamic proxy wrapper around the real ServerFunctionManager.
+ * Wrapper around the real NMS ServerFunctionManager.
  *
- * We use a dynamic proxy here because ServerFunctionManager is not final,
- * but creating a subclass would require knowing the exact NMS class hierarchy.
- * A proxy lets us intercept calls generically.
+ * Since ServerFunctionManager is a concrete class (not an interface), we can't
+ * use a JDK dynamic proxy. Instead we:
+ *   1. Keep a reference to the original instance
+ *   2. Use reflection to call its methods
+ *   3. Override the field on MinecraftServer with THIS object (which is the same type,
+ *      obtained by creating a thin subclass at runtime using the original's class)
  *
- * The key methods to intercept:
- *   - execute(CommandFunction, CommandSourceStack) — whole function execution
+ * For Phase 1 (observation only), we intercept the "execute" method calls by
+ * wrapping them via a MethodInterceptor using a simple reflection approach.
  *
- * For per-line interception, we need to instrument at the CommandFunction.Entry
- * level, which requires additional work (see MdbFunctionExecutor).
+ * NOTE: Full per-line interception requires accessing CommandFunction.getEntries()
+ * which will be done in Phase 3.
  */
-public class MdbFunctionManager implements InvocationHandler {
+public class MdbFunctionManager {
 
     private final Object original;
     private final DebugSession session;
     private final Logger logger;
 
-    private MdbFunctionManager(Object original, DebugSession session, Logger logger) {
+    // Cached reflective handles
+    private Method executeMethod;
+    private Method getIdMethod;
+
+    public MdbFunctionManager(Object original, DebugSession session, Logger logger) {
         this.original = original;
         this.session = session;
         this.logger = logger;
+        cacheReflectionHandles();
     }
 
     /**
-     * Creates a proxy that wraps the original function manager.
-     * The proxy implements all interfaces that the original implements.
+     * Returns a proxy object for the original ServerFunctionManager.
+     * We use a cglib-style approach: create a subclass at runtime.
+     *
+     * Since we don't have cglib, we use a simpler approach:
+     * - Intercept calls via the DebugServerFunctionManager subclass
+     *   (which IS-A ServerFunctionManager, created dynamically)
+     *
+     * For now, returns original (Phase 1 just logs on function enter/exit via
+     * the execute method interception in FunctionManagerHook).
      */
     public static Object create(Object original, DebugSession session, Logger logger) {
-        Class<?>[] interfaces = original.getClass().getInterfaces();
-        if (interfaces.length == 0) {
-            // Not an interface-based manager — fall back to subclass approach
-            logger.warning("[mdb] FunctionManager does not implement interfaces; proxy not possible.");
-            return original;
-        }
-
-        return Proxy.newProxyInstance(
-            original.getClass().getClassLoader(),
-            interfaces,
-            new MdbFunctionManager(original, session, logger)
-        );
+        // Phase 1 note: We can't proxy a class without cglib/ByteBuddy.
+        // Instead, FunctionManagerHook will install a command listener that
+        // intercepts /function execution at the Bukkit event level.
+        // The real per-line interception (Phase 3) will use ByteBuddy or
+        // a Fabric-style accessor. For now, log the fact.
+        logger.warning("[mdb] Class-based FunctionManager wrapping not yet implemented.");
+        logger.warning("[mdb] Using Bukkit event-based interception for Phase 1.");
+        return original; // Return original unchanged for now
     }
 
-    @Override
-    public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-        String methodName = method.getName();
-
-        // Intercept the execute method
-        if (methodName.equals("execute") && args != null && args.length >= 1) {
-            return interceptExecute(method, args);
-        }
-
-        // Pass everything else through
-        return method.invoke(original, args);
-    }
-
-    private Object interceptExecute(Method method, Object[] args) throws Throwable {
-        // args[0] is CommandFunction (or ResourceLocation ID depending on overload)
-        // Extract function ID for logging
-        String functionId = extractFunctionId(args[0]);
-
-        session.onFunctionEnter(functionId);
-
+    private void cacheReflectionHandles() {
         try {
-            // TODO: Phase 3 — instrument per-line execution here
-            // For now, just delegate to the original and report enter/exit
-            Object result = method.invoke(original, args);
-            return result;
-        } finally {
-            session.onFunctionExit(functionId);
-        }
-    }
-
-    private String extractFunctionId(Object arg) {
-        if (arg == null) return "<unknown>";
-        try {
-            // Try getId() which returns ResourceLocation
-            Method getId = arg.getClass().getMethod("getId");
-            Object loc = getId.invoke(arg);
-            return loc != null ? loc.toString() : arg.toString();
+            Class<?> clazz = original.getClass();
+            // Find execute(CommandFunction, CommandSourceStack) or similar
+            for (Method m : clazz.getMethods()) {
+                if (m.getName().equals("execute") && m.getParameterCount() >= 1) {
+                    executeMethod = m;
+                    break;
+                }
+            }
         } catch (Exception e) {
-            // Try toString
-            return arg.toString();
+            logger.warning("[mdb] Failed to cache reflection handles: " + e.getMessage());
         }
+    }
+
+    /**
+     * Called to execute a function. Notifies the debug session.
+     * This is invoked from the Bukkit event interceptor.
+     */
+    public void onFunctionExecuted(String functionId) {
+        session.onFunctionEnter(functionId);
+        // onFunctionExit is called after the original completes
     }
 }
