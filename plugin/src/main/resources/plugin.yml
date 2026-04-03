@@ -1,0 +1,10 @@
+name: mdb
+version: '${project.version}'
+main: dev.mdb.MdbPlugin
+api-version: '1.20'
+description: Minecraft Datapack Debugger - Paper plugin component
+authors: [bkmashiro]
+commands:
+  mdb:
+    description: mdb debugger control
+    usage: /mdb <status|connect|disconnect>
