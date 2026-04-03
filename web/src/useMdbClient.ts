@@ -212,6 +212,10 @@ export function useMdbClient(wsUrl: string) {
           log(`storage keys: ${(msg.keys ?? []).join(', ') || '(empty)'}`)
           break
 
+        case 'commandAck':
+          log(`▶ /${msg.command}`)
+          break
+
         case 'objectives':
           log(`objectives: ${(msg.objectives ?? []).join(', ')}`)
           break
@@ -271,6 +275,7 @@ export function useMdbClient(wsUrl: string) {
     listStorage: () => send({ type: 'listStorage' }),
     listObjectives: () => send({ type: 'listObjectives' }),
     getSource: (fn: string) => send({ type: 'getSource', function: fn }),
+    runCommand: (command: string) => send({ type: 'runCommand', command }),
     raw: send,
   }
 

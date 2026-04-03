@@ -276,6 +276,21 @@ public class DebugSession {
                     handleGetSource(fnId);
                 }
 
+                case "runCommand" -> {
+                    // Execute a command on the MC server as console
+                    String cmd = msg.has("command") ? msg.get("command").getAsString() : null;
+                    if (cmd != null) {
+                        String finalCmd = cmd.startsWith("/") ? cmd.substring(1) : cmd;
+                        plugin.getServer().getScheduler().runTask(plugin, () ->
+                            plugin.getServer().dispatchCommand(
+                                plugin.getServer().getConsoleSender(), finalCmd));
+                        JsonObject resp = new JsonObject();
+                        resp.addProperty("type", "commandAck");
+                        resp.addProperty("command", finalCmd);
+                        sendRaw(gson.toJson(resp));
+                    }
+                }
+
                 default -> plugin.getLogger().warning("[mdb] Unknown message type: " + type);
             }
         } catch (Exception e) {

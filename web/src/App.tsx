@@ -173,9 +173,13 @@ function SourceViewer({ state, actions }: any) {
               title={fn ? (isBp ? 'Click to remove breakpoint' : 'Click to set breakpoint') : ''}
               className="source-line"
             >
-              <span style={{ width: 36, textAlign: 'right', color: isCurrent ? C.yellow : C.muted, paddingRight: 8, flexShrink: 0, userSelect: 'none', lineHeight: '18px', fontSize: 11 }}>
-                {isBp && !isCurrent ? '●' : lineNo}
-              </span>
+              {/* Gutter: dot + line number */}
+              <div style={{ display: 'flex', alignItems: 'center', width: 52, flexShrink: 0, userSelect: 'none', fontSize: 11 }}>
+                <div style={{ width: 14, textAlign: 'center', color: isBp ? C.red : 'transparent', fontSize: 10 }}>
+                  {isCurrent && isBp ? '⏸' : isBp ? '●' : isCurrent ? '▶' : ' '}
+                </div>
+                <div style={{ flex: 1, textAlign: 'right', paddingRight: 8, color: isCurrent ? C.yellow : C.muted }}>{lineNo}</div>
+              </div>
               <span style={{ color: colorizeCommand(line), lineHeight: '18px', whiteSpace: 'pre', paddingRight: 8 }}>
                 {line || ' '}
               </span>
@@ -498,6 +502,10 @@ function CommandBar({ actions }: any) {
       case 'source':
         if (parts[1]) actions.getSource(parts[1])
         break
+      case 'run': case '/':
+        // run <mc command>   e.g. run function mdb_demo:main
+        actions.runCommand(parts.slice(1).join(' '))
+        break
       case 'obj': case 'objectives': actions.listObjectives(); break
       default:
         actions.raw({ type: parts[0], ...Object.fromEntries(parts.slice(1).map((v: string, i: number) => [`arg${i}`, v])) })
@@ -518,7 +526,7 @@ function CommandBar({ actions }: any) {
             if (e.key === 'ArrowUp') { const idx = Math.min(histIdx + 1, history.length - 1); setHistIdx(idx); setCmd(history[idx] ?? '') }
             if (e.key === 'ArrowDown') { const idx = Math.max(histIdx - 1, -1); setHistIdx(idx); setCmd(idx === -1 ? '' : history[idx]) }
           }}
-          placeholder="break fn line | continue | step | print obj | storage ns:key path | source fn"
+          placeholder="run function mdb_demo:main  |  break fn line  |  step  |  print obj  |  storage ns:key"
           autoFocus
         />
         <button style={{ ...s.btn(C.purple, true), flexShrink: 0 }} onClick={run}>run</button>

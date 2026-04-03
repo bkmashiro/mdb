@@ -137,18 +137,27 @@ export function FileExplorer({ breakpoints, onSetBreakpoint, onClearBreakpoint, 
                 }}
                 title={openFile.functionId ? (hasBp ? 'Remove breakpoint' : 'Set breakpoint') : ''}
               >
-                {/* Gutter */}
+                {/* Gutter: [bp dot] [line number] */}
                 <div style={{
-                  width: 44,
-                  textAlign: 'right',
-                  paddingRight: 8,
-                  color: current ? C.yellow : hasBp ? C.red : C.muted,
-                  userSelect: 'none',
-                  lineHeight: '20px',
-                  flexShrink: 0,
-                  fontSize: 11,
+                  display: 'flex', alignItems: 'center',
+                  width: 52, flexShrink: 0,
+                  userSelect: 'none', lineHeight: '20px', fontSize: 11,
                 }}>
-                  {hasBp ? (current ? '⏸' : '●') : lineNo}
+                  {/* Breakpoint dot column */}
+                  <div style={{
+                    width: 16, textAlign: 'center', flexShrink: 0,
+                    color: hasBp ? C.red : 'transparent',
+                    fontSize: 10,
+                  }}>
+                    {current && hasBp ? '⏸' : hasBp ? '●' : current ? '▶' : ' '}
+                  </div>
+                  {/* Line number */}
+                  <div style={{
+                    flex: 1, textAlign: 'right', paddingRight: 8,
+                    color: current ? C.yellow : C.muted,
+                  }}>
+                    {lineNo}
+                  </div>
                 </div>
                 {/* Code */}
                 <span style={{
