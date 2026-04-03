@@ -17,6 +17,8 @@ repositories {
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
+    // Brigadier (CommandDispatcher) — included transitively via paper-api but declared explicitly
+    compileOnly("com.mojang:brigadier:1.3.10")
     // WebSocket client (connects to mdb server)
     implementation("org.java-websocket:Java-WebSocket:1.5.6")
     // JSON

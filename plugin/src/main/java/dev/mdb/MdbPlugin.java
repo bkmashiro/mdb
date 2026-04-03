@@ -3,6 +3,7 @@ package dev.mdb;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
+import java.lang.reflect.Field;
 
 public class MdbPlugin extends JavaPlugin {
 
@@ -20,8 +21,27 @@ public class MdbPlugin extends JavaPlugin {
         session = new DebugSession(this, host, port, timeout, traceAll);
 
         // Phase 1: Use Bukkit event listener to intercept /function commands
-        getServer().getPluginManager().registerEvents(new FunctionEventListener(session), this);
+        getServer().getPluginManager().registerEvents(new FunctionEventListener(session, getLogger()), this);
         getLogger().info("[mdb] FunctionEventListener registered.");
+
+        // Phase 3: Patch the function library (needs to happen after world load)
+        // Schedule 1-tick delay to ensure library is populated
+        getServer().getScheduler().runTaskLater(this, () -> {
+            try {
+                Object craftServer = getServer();
+                Object nmsServer = craftServer.getClass().getMethod("getServer").invoke(craftServer);
+                Object functionManager = findField(nmsServer, "functionManager");
+                if (functionManager != null) {
+                    FunctionLibraryPatcher patcher = new FunctionLibraryPatcher(session, getLogger());
+                    int n = patcher.patchLibrary(functionManager);
+                    getLogger().info("[mdb] Phase 3 ready, " + n + " functions instrumented.");
+                } else {
+                    getLogger().warning("[mdb] Could not find functionManager for Phase 3");
+                }
+            } catch (Exception e) {
+                getLogger().warning("[mdb] Phase 3 init failed: " + e.getMessage());
+            }
+        }, 1L);
 
         // Connect to debug server (non-blocking)
         session.connect();
@@ -35,6 +55,25 @@ public class MdbPlugin extends JavaPlugin {
             session.disconnect();
         }
         getLogger().info("[mdb] Plugin disabled.");
+    }
+
+    private Object findField(Object obj, String... names) {
+        try {
+            Class<?> clazz = obj.getClass();
+            while (clazz != null) {
+                for (Field f : clazz.getDeclaredFields()) {
+                    for (String name : names) {
+                        if (f.getName().equals(name) ||
+                            f.getType().getSimpleName().toLowerCase().contains("functionmanager")) {
+                            f.setAccessible(true);
+                            return f.get(obj);
+                        }
+                    }
+                }
+                clazz = clazz.getSuperclass();
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     @Override
