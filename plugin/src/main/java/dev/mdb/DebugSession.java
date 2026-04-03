@@ -1,10 +1,12 @@
 package dev.mdb;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -13,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Manages the connection to the mdb debug server and breakpoint state.
+ * Central hub: breakpoints, stepping, call stack, watches, scoreboard reads.
  */
 public class DebugSession {
 
@@ -23,16 +25,21 @@ public class DebugSession {
     private final int breakpointTimeoutSeconds;
     private final boolean traceAll;
     private final Gson gson = new Gson();
-    private ScoreboardReader scoreboardReader;
 
-    // breakpoints: "namespace:path/to/func" -> set of line numbers (1-indexed)
+    // breakpoints: "namespace:path" -> set of line numbers (1-indexed)
     private final Map<String, Set<Integer>> breakpoints = new ConcurrentHashMap<>();
 
-    // The current latch — non-null when paused at a breakpoint
+    // watchpoints
+    private final WatchList watchList = new WatchList();
+
+    // pause latch — non-null when paused
     private final AtomicReference<CountDownLatch> pauseLatch = new AtomicReference<>(null);
 
-    // "step" mode: pause after every command
+    // step mode: pause after every command
     private volatile boolean stepping = false;
+
+    // scoreboard reader (init after world load)
+    private ScoreboardReader scoreboardReader;
 
     private PluginWebSocketClient wsClient;
 
@@ -44,6 +51,8 @@ public class DebugSession {
         this.traceAll = traceAll;
     }
 
+    // ── Init ──────────────────────────────────────────────────────────────────
+
     public void initScoreboardReader() {
         scoreboardReader = new ScoreboardReader(plugin.getLogger());
     }
@@ -54,7 +63,7 @@ public class DebugSession {
             wsClient = new PluginWebSocketClient(uri, this, plugin.getLogger());
             wsClient.connectBlocking(3, TimeUnit.SECONDS);
         } catch (Exception e) {
-            plugin.getLogger().warning("[mdb] Could not connect to debug server: " + e.getMessage());
+            plugin.getLogger().warning("[mdb] Could not connect: " + e.getMessage());
         }
     }
 
@@ -62,60 +71,109 @@ public class DebugSession {
         if (wsClient != null) {
             try { wsClient.closeBlocking(); } catch (Exception ignored) {}
         }
-        resume(); // release any paused tick
+        resume();
     }
 
     public boolean isConnected() {
         return wsClient != null && wsClient.isOpen();
     }
 
-    // ── Called from FunctionManagerHook ──────────────────────────────────────
+    // ── Called from InstrumentedAction ───────────────────────────────────────
 
     public void onFunctionEnter(String functionId) {
-        if (traceAll) plugin.getLogger().info("[mdb] >> enter: " + functionId);
+        if (traceAll) plugin.getLogger().info("[mdb] >> " + functionId);
+        CallStack.push(functionId);
         send(Map.of("type", "functionEnter", "function", functionId));
     }
 
     public void onFunctionExit(String functionId) {
-        if (traceAll) plugin.getLogger().info("[mdb] << exit: " + functionId);
+        if (traceAll) plugin.getLogger().info("[mdb] << " + functionId);
+        CallStack.pop();
         send(Map.of("type", "functionExit", "function", functionId));
     }
 
     /**
-     * Called before each command. Returns after the debugger allows execution
-     * (either no breakpoint, or user pressed step/continue).
+     * Called BEFORE each command line executes.
+     * Blocks the MC main thread if a breakpoint or step is active.
      */
     public void onBeforeCommand(String functionId, int line, String command,
-                                 Map<String, Integer> scores) {
-        if (traceAll) {
-            plugin.getLogger().info("[mdb] cmd [" + functionId + ":" + line + "] " + command);
-        }
+                                 Map<String, Integer> ignored) {
+        if (traceAll) plugin.getLogger().info("[mdb] cmd [" + functionId + ":" + line + "] " + command);
+
+        CallStack.updateCurrentLine(line);
 
         boolean isBreakpoint = hasBreakpoint(functionId, line);
-
         if (!isBreakpoint && !stepping) return;
 
-        // Notify client we stopped
+        pauseAt(functionId, line, command, isBreakpoint ? "breakpoint" : "step");
+    }
+
+    /**
+     * Called AFTER each command executes — check watchpoints.
+     */
+    public void onAfterCommand(String functionId, int line, String command,
+                                Map<String, Integer> ignored) {
+        if (watchList.isEmpty() || scoreboardReader == null) return;
+
+        WatchList.WatchHit hit = watchList.detectChange(scoreboardReader);
+        if (hit == null) return;
+
+        // Notify clients
         JsonObject msg = new JsonObject();
-        msg.addProperty("type", "stopped");
-        msg.addProperty("reason", stepping ? "step" : "breakpoint");
+        msg.addProperty("type", "watchHit");
+        msg.addProperty("watch", hit.key.toString());
+        msg.addProperty("objective", hit.key.objective);
+        msg.addProperty("entry", hit.key.entry);
+        if (hit.oldValue != null) msg.addProperty("oldValue", hit.oldValue);
+        else msg.addProperty("oldValue", (Integer) null);
+        if (hit.newValue != null) msg.addProperty("newValue", hit.newValue);
+        else msg.addProperty("newValue", (Integer) null);
+        // Include location
         JsonObject loc = new JsonObject();
         loc.addProperty("function", functionId);
         loc.addProperty("line", line);
         loc.addProperty("command", command);
         msg.add("location", loc);
-        JsonObject scoresObj = new JsonObject();
-        scores.forEach(scoresObj::addProperty);
-        msg.add("scores", scoresObj);
         sendRaw(gson.toJson(msg));
 
-        // Block the MC main thread (tick freeze)
+        // Pause like a breakpoint
+        pauseAt(functionId, line, command, "watch");
+    }
+
+    // ── Pause logic ───────────────────────────────────────────────────────────
+
+    private void pauseAt(String functionId, int line, String command, String reason) {
+        JsonObject msg = new JsonObject();
+        msg.addProperty("type", "stopped");
+        msg.addProperty("reason", reason);
+
+        JsonObject loc = new JsonObject();
+        loc.addProperty("function", functionId);
+        loc.addProperty("line", line);
+        loc.addProperty("command", command);
+        msg.add("location", loc);
+
+        // Attach call stack
+        List<CallStack.Frame> stack = CallStack.snapshot();
+        JsonArray stackArr = new JsonArray();
+        for (CallStack.Frame frame : stack) {
+            JsonObject f = new JsonObject();
+            f.addProperty("function", frame.functionId);
+            f.addProperty("line", frame.currentLine);
+            stackArr.add(f);
+        }
+        msg.add("stack", stackArr);
+
+        sendRaw(gson.toJson(msg));
+
+        // Block MC main thread
         CountDownLatch latch = new CountDownLatch(1);
         pauseLatch.set(latch);
         try {
             boolean resumed = latch.await(breakpointTimeoutSeconds, TimeUnit.SECONDS);
             if (!resumed) {
-                plugin.getLogger().warning("[mdb] Breakpoint timeout — auto-resuming.");
+                plugin.getLogger().warning("[mdb] Breakpoint timeout (" + breakpointTimeoutSeconds + "s) — auto-resuming.");
+                stepping = false;
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -124,12 +182,7 @@ public class DebugSession {
         }
     }
 
-    public void onAfterCommand(String functionId, int line, String command,
-                                Map<String, Integer> scores) {
-        // Could send a "commandResult" event here if needed
-    }
-
-    // ── Called from WebSocket client (server → plugin commands) ──────────────
+    // ── Server message handler ────────────────────────────────────────────────
 
     public void handleServerMessage(String json) {
         try {
@@ -137,14 +190,9 @@ public class DebugSession {
             String type = msg.get("type").getAsString();
 
             switch (type) {
-                case "step" -> {
-                    stepping = true;
-                    resume();
-                }
-                case "continue" -> {
-                    stepping = false;
-                    resume();
-                }
+                case "step" -> { stepping = true;  resume(); }
+                case "continue" -> { stepping = false; resume(); }
+
                 case "setBreakpoint" -> {
                     String func = msg.get("function").getAsString();
                     int line = msg.get("line").getAsInt();
@@ -159,52 +207,60 @@ public class DebugSession {
                 }
                 case "clearAllBreakpoints" -> breakpoints.clear();
 
+                case "watch" -> {
+                    String obj = msg.get("objective").getAsString();
+                    String entry = msg.get("entry").getAsString();
+                    watchList.add(obj, entry);
+                    // baseline is established on first detectChange call (value=null)
+                    plugin.getLogger().info("[mdb] Watch: " + obj + "[" + entry + "]");
+                }
+                case "unwatch" -> {
+                    String obj = msg.get("objective").getAsString();
+                    String entry = msg.get("entry").getAsString();
+                    watchList.remove(obj, entry);
+                }
+                case "unwatchAll" -> watchList.clear();
+
                 case "print" -> {
-                    // print <objective> [entry]
                     String objective = msg.has("objective") ? msg.get("objective").getAsString() : null;
                     String entry = msg.has("entry") ? msg.get("entry").getAsString() : null;
                     handlePrint(objective, entry);
                 }
-
                 case "listObjectives" -> {
                     if (scoreboardReader != null) {
                         var names = scoreboardReader.listObjectives();
                         JsonObject resp = new JsonObject();
                         resp.addProperty("type", "objectives");
-                        var arr = new com.google.gson.JsonArray();
+                        JsonArray arr = new JsonArray();
                         names.forEach(arr::add);
                         resp.add("objectives", arr);
                         sendRaw(gson.toJson(resp));
                     }
                 }
 
-                default -> plugin.getLogger().warning("[mdb] Unknown server message type: " + type);
+                default -> plugin.getLogger().warning("[mdb] Unknown message type: " + type);
             }
         } catch (Exception e) {
-            plugin.getLogger().warning("[mdb] Failed to parse server message: " + e.getMessage());
+            plugin.getLogger().warning("[mdb] Failed to parse server message: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 
-    // ── Print / scoreboard helpers ──────────────────────────────────────────
+    // ── Print / scoreboard ────────────────────────────────────────────────────
 
     private void handlePrint(String objective, String entry) {
-        if (scoreboardReader == null) {
-            sendRaw("{\"type\":\"printResult\",\"error\":\"ScoreboardReader not initialized\"}");
-            return;
-        }
         JsonObject resp = new JsonObject();
         resp.addProperty("type", "printResult");
-        if (objective == null) {
+        if (scoreboardReader == null) {
+            resp.addProperty("error", "ScoreboardReader not initialized");
+        } else if (objective == null) {
             resp.addProperty("error", "objective required");
         } else if (entry != null) {
-            // Single score
             Integer val = scoreboardReader.readScore(objective, entry);
             resp.addProperty("objective", objective);
             resp.addProperty("entry", entry);
             if (val != null) resp.addProperty("value", val);
             else resp.addProperty("error", "not set");
         } else {
-            // All scores for objective
             Map<String, Integer> scores = scoreboardReader.readObjective(objective);
             resp.addProperty("objective", objective);
             JsonObject scoresObj = new JsonObject();
@@ -214,7 +270,7 @@ public class DebugSession {
         sendRaw(gson.toJson(resp));
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private boolean hasBreakpoint(String functionId, int line) {
         Set<Integer> lines = breakpoints.get(functionId);
@@ -226,9 +282,7 @@ public class DebugSession {
         if (latch != null) latch.countDown();
     }
 
-    private void send(Map<String, ?> data) {
-        sendRaw(gson.toJson(data));
-    }
+    private void send(Map<String, ?> data) { sendRaw(gson.toJson(data)); }
 
     private void sendRaw(String json) {
         if (isConnected()) {

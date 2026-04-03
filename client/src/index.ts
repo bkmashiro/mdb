@@ -16,6 +16,7 @@ class MdbClient {
   private connected = false
   private paused = false
   private currentLocation: { function: string; line: number; command: string } | null = null
+  private callStack: Array<{ function: string; line: number }> = []
 
   constructor() {
     this.rl = readline.createInterface({
@@ -33,8 +34,7 @@ class MdbClient {
 
     this.ws.on('open', () => {
       this.connected = true
-      console.log('[mdb] Connected to debug server.')
-      console.log('[mdb] Type "help" for available commands.\n')
+      console.log('[mdb] Connected. Type "help" for commands.\n')
       this.rl.prompt()
     })
 
@@ -50,13 +50,13 @@ class MdbClient {
 
     this.ws.on('close', () => {
       this.connected = false
-      console.log('\n[mdb] Disconnected from debug server.')
+      console.log('\n[mdb] Disconnected.')
       process.exit(0)
     })
 
     this.ws.on('error', (err) => {
-      console.error(`[mdb] Connection error: ${err.message}`)
-      console.error(`[mdb] Is the debug server running? Start with: node server/dist/index.js`)
+      console.error(`[mdb] Error: ${err.message}`)
+      console.error(`[mdb] Is the debug server running? cd server && node dist/index.js`)
       process.exit(1)
     })
   }
@@ -64,11 +64,49 @@ class MdbClient {
   private handleServerMessage(msg: any) {
     switch (msg.type) {
       case 'hello':
-        console.log(`[mdb] Plugin connected: ${msg.pluginConnected ? '✓' : '✗ (not yet)'}`)
-        if (msg.breakpoints?.length > 0) {
-          console.log(`[mdb] Active breakpoints: ${msg.breakpoints.length}`)
-        }
+        console.log(`[mdb] Plugin: ${msg.pluginConnected ? '✓ connected' : '✗ not connected'}`)
+        if (msg.breakpoints?.length > 0) console.log(`[mdb] Breakpoints: ${msg.breakpoints.length}`)
         break
+
+      case 'pluginDisconnected':
+        console.log('[mdb] ⚠ Plugin disconnected')
+        break
+
+      case 'functionEnter':
+        // Quiet — call stack is shown on 'stopped'
+        break
+
+      case 'functionExit':
+        break
+
+      case 'stopped': {
+        this.paused = true
+        this.currentLocation = msg.location
+        this.callStack = msg.stack ?? []
+        const loc = msg.location
+        const reason = msg.reason === 'watch' ? `⚡ watch` : msg.reason === 'step' ? '→ step' : '⏸ breakpoint'
+        console.log(`\n${reason}  ${loc.function}:${loc.line}`)
+        console.log(`   ${loc.command}`)
+        // Show call stack if depth > 1
+        if (this.callStack.length > 1) {
+          console.log('   Stack:')
+          this.callStack.forEach((f, i) => {
+            const marker = i === 0 ? '→' : ' '
+            console.log(`     ${marker} ${f.function}:${f.line}`)
+          })
+        }
+        this.rl.prompt()
+        break
+      }
+
+      case 'watchHit': {
+        // watchHit is handled as part of 'stopped' now, but keep for legacy
+        const old = msg.oldValue !== null ? String(msg.oldValue) : 'unset'
+        const nv  = msg.newValue !== null ? String(msg.newValue) : 'unset'
+        console.log(`\n⚡ Watch: ${msg.watch} changed ${old} → ${nv}`)
+        this.rl.prompt()
+        break
+      }
 
       case 'printResult': {
         if (msg.error) {
@@ -79,12 +117,10 @@ class MdbClient {
           const scores = msg.scores as Record<string, number>
           const entries = Object.entries(scores).sort(([a], [b]) => a.localeCompare(b))
           if (entries.length === 0) {
-            console.log(`\n  [print] ${msg.objective}: (empty)`)
+            console.log(`\n  ${msg.objective}: (empty)`)
           } else {
             console.log(`\n  ${msg.objective}:`)
-            for (const [k, v] of entries) {
-              console.log(`    ${k.padEnd(32)} = ${v}`)
-            }
+            entries.forEach(([k, v]) => console.log(`    ${k.padEnd(36)} ${v}`))
           }
         }
         this.rl.prompt()
@@ -99,37 +135,12 @@ class MdbClient {
         break
       }
 
-      case 'pluginDisconnected':
-        console.log('[mdb] ⚠ Plugin disconnected from server')
-        break
-
-      case 'functionEnter':
-        process.stdout.write(`\n>> ${msg.function}\n`)
-        this.rl.prompt()
-        break
-
-      case 'functionExit':
-        process.stdout.write(`\n<< ${msg.function}\n`)
-        this.rl.prompt()
-        break
-
-      case 'stopped': {
-        this.paused = true
-        this.currentLocation = msg.location
-        const loc = msg.location
-        console.log(`\n⏸  Stopped at ${loc.function}:${loc.line} [${msg.reason}]`)
-        console.log(`   ${loc.command}`)
-        if (msg.scores && Object.keys(msg.scores).length > 0) {
-          console.log('   Scores:', JSON.stringify(msg.scores))
-        }
-        this.rl.prompt()
-        break
-      }
-
       default:
-        // Compact display for unknown events
-        console.log('\n[event]', JSON.stringify(msg))
-        this.rl.prompt()
+        // Unknown — show raw JSON quietly
+        if (!['functionEnter','functionExit'].includes(msg.type)) {
+          console.log('\n[event]', JSON.stringify(msg))
+          this.rl.prompt()
+        }
     }
   }
 
@@ -152,37 +163,36 @@ class MdbClient {
       case 'help':
         console.log(`
 Commands:
-  break <fn> <line>         Set a breakpoint   e.g. break my_pack:tick 5
-  clear <fn> <line>         Clear a breakpoint
+  break / b  <fn> <line>    Set breakpoint      break my_pack:combat/tick 5
+  clear      <fn> <line>    Clear breakpoint
   clearall                  Clear all breakpoints
   continue / c              Resume execution
-  step / s                  Step to next command (pause after each line)
-  print / p <obj> [entry]   Print scoreboard    e.g. print mdb_test $x
-  objectives / obj          List all scoreboard objectives
-  status                    Show connection status
+  step / s                  Step one command
+  bt                        Print call stack
+  print / p  <obj> [entry]  Read scoreboard     print mdb_test \\$x
+  watch / w  <obj> <entry>  Watch for changes   watch mdb_test \\$x
+  unwatch    <obj> <entry>  Remove watch
+  unwatchall                Remove all watches
+  objectives / obj          List objectives
+  status                    Connection status
   quit / q                  Exit
 `)
         break
 
-      case 'break':
-      case 'b': {
-        if (parts.length < 3) {
-          console.log('Usage: break <function> <line>')
-          break
-        }
-        const fn = parts[1]
-        const line = parseInt(parts[2])
-        if (isNaN(line)) { console.log('Line must be a number'); break }
-        this.send({ type: 'setBreakpoint', function: fn, line })
-        console.log(`Breakpoint set: ${fn}:${line}`)
+      case 'break': case 'b': {
+        if (parts.length < 3) { console.log('Usage: break <function> <line>'); break }
+        const fn = parts[1]; const lineNum = parseInt(parts[2])
+        if (isNaN(lineNum)) { console.log('Line must be a number'); break }
+        this.send({ type: 'setBreakpoint', function: fn, line: lineNum })
+        console.log(`Breakpoint set: ${fn}:${lineNum}`)
         break
       }
 
       case 'clear': {
-        if (parts.length < 3) { console.log('Usage: clear <function> <line>'); break }
-        const fn = parts[1]; const line = parseInt(parts[2])
-        this.send({ type: 'clearBreakpoint', function: fn, line })
-        console.log(`Breakpoint cleared: ${fn}:${line}`)
+        if (parts.length < 3) { console.log('Usage: clear <fn> <line>'); break }
+        const fn = parts[1]; const lineNum = parseInt(parts[2])
+        this.send({ type: 'clearBreakpoint', function: fn, line: lineNum })
+        console.log(`Cleared: ${fn}:${lineNum}`)
         break
       }
 
@@ -191,23 +201,30 @@ Commands:
         console.log('All breakpoints cleared.')
         break
 
-      case 'continue':
-      case 'c':
+      case 'continue': case 'c':
         this.send({ type: 'continue' })
         this.paused = false
         break
 
-      case 'step':
-      case 's':
+      case 'step': case 's':
         this.send({ type: 'step' })
         this.paused = false
         break
 
-      case 'print':
-      case 'p': {
-        // print <objective> [entry]
-        // e.g.: print mdb_test        -> all scores
-        //       print mdb_test $x     -> single entry
+      case 'bt': {
+        if (this.callStack.length === 0) {
+          console.log('Not paused / no stack info.')
+        } else {
+          console.log('Call stack:')
+          this.callStack.forEach((f, i) => {
+            const marker = i === 0 ? '#0 (current)' : `#${i}`
+            console.log(`  ${marker.padEnd(14)} ${f.function}:${f.line}`)
+          })
+        }
+        break
+      }
+
+      case 'print': case 'p': {
         if (parts.length < 2) { console.log('Usage: print <objective> [entry]'); break }
         const msg: any = { type: 'print', objective: parts[1] }
         if (parts[2]) msg.entry = parts[2]
@@ -215,8 +232,26 @@ Commands:
         break
       }
 
-      case 'objectives':
-      case 'obj':
+      case 'watch': case 'w': {
+        if (parts.length < 3) { console.log('Usage: watch <objective> <entry>'); break }
+        this.send({ type: 'watch', objective: parts[1], entry: parts[2] })
+        console.log(`Watch set: ${parts[1]}[${parts[2]}]`)
+        break
+      }
+
+      case 'unwatch': {
+        if (parts.length < 3) { console.log('Usage: unwatch <objective> <entry>'); break }
+        this.send({ type: 'unwatch', objective: parts[1], entry: parts[2] })
+        console.log(`Watch removed: ${parts[1]}[${parts[2]}]`)
+        break
+      }
+
+      case 'unwatchall':
+        this.send({ type: 'unwatchAll' })
+        console.log('All watches removed.')
+        break
+
+      case 'objectives': case 'obj':
         this.send({ type: 'listObjectives' })
         break
 
@@ -224,18 +259,20 @@ Commands:
         console.log(`Connected: ${this.connected}`)
         console.log(`Paused:    ${this.paused}`)
         if (this.currentLocation) {
-          console.log(`Location:  ${this.currentLocation.function}:${this.currentLocation.line}`)
+          console.log(`At:        ${this.currentLocation.function}:${this.currentLocation.line}`)
+        }
+        if (this.callStack.length > 0) {
+          console.log(`Stack depth: ${this.callStack.length}`)
         }
         break
 
-      case 'quit':
-      case 'q':
+      case 'quit': case 'q':
         console.log('Bye.')
         process.exit(0)
         break
 
       default:
-        console.log(`Unknown command: ${cmd}. Type "help" for help.`)
+        console.log(`Unknown: ${cmd}. Type "help".`)
     }
   }
 
@@ -244,12 +281,7 @@ Commands:
       this.handleCommand(line)
       this.rl.prompt()
     })
-
-    this.rl.on('close', () => {
-      console.log('\nBye.')
-      process.exit(0)
-    })
-
+    this.rl.on('close', () => { console.log('\nBye.'); process.exit(0) })
     this.connect(SERVER_HOST, CLIENT_PORT)
   }
 }

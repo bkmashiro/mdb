@@ -5,6 +5,11 @@ interface Breakpoint {
   line: number
 }
 
+interface Watch {
+  objective: string
+  entry: string
+}
+
 /**
  * mdb debug bridge server.
  *
@@ -20,6 +25,7 @@ export class DebugServer {
   private pluginSocket: WebSocket | null = null
   private clientSockets: Set<WebSocket> = new Set()
   private breakpoints: Breakpoint[] = []
+  private watches: Watch[] = []
 
   constructor(private pluginPort: number, private clientPort: number) {
     this.pluginWss = new WebSocketServer({ port: pluginPort })
@@ -31,9 +37,12 @@ export class DebugServer {
       console.log('[mdb-server] Plugin connected')
       this.pluginSocket = ws
 
-      // Send current breakpoints to the freshly connected plugin
+      // Send current breakpoints and watches to freshly connected plugin
       for (const bp of this.breakpoints) {
         this.sendToPlugin({ type: 'setBreakpoint', function: bp.function, line: bp.line })
+      }
+      for (const w of this.watches) {
+        this.sendToPlugin({ type: 'watch', objective: w.objective, entry: w.entry })
       }
 
       ws.on('message', (data) => {
@@ -66,7 +75,8 @@ export class DebugServer {
       ws.send(JSON.stringify({
         type: 'hello',
         pluginConnected: this.pluginSocket !== null,
-        breakpoints: this.breakpoints
+        breakpoints: this.breakpoints,
+        watches: this.watches
       }))
 
       ws.on('message', (data) => {
@@ -112,6 +122,26 @@ export class DebugServer {
         this.sendToPlugin(msg)
         break
       }
+      case 'watch': {
+        const w: Watch = { objective: msg.objective, entry: msg.entry }
+        // Avoid duplicates
+        if (!this.watches.some(x => x.objective === w.objective && x.entry === w.entry)) {
+          this.watches.push(w)
+        }
+        this.sendToPlugin(msg)
+        break
+      }
+      case 'unwatch': {
+        this.watches = this.watches.filter(
+          w => !(w.objective === msg.objective && w.entry === msg.entry)
+        )
+        this.sendToPlugin(msg)
+        break
+      }
+      case 'unwatchAll':
+        this.watches = []
+        this.sendToPlugin(msg)
+        break
       case 'step':
       case 'continue':
       case 'print':

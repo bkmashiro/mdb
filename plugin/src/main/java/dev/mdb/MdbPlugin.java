@@ -20,31 +20,10 @@ public class MdbPlugin extends JavaPlugin {
 
         session = new DebugSession(this, host, port, timeout, traceAll);
 
-        // Init scoreboard reader (needs to run on main thread after world load)
-        getServer().getScheduler().runTask(this, session::initScoreboardReader);
-
-        // Phase 1: Use Bukkit event listener to intercept /function commands
+        // Register event listeners
         getServer().getPluginManager().registerEvents(new FunctionEventListener(session, getLogger()), this);
-        getLogger().info("[mdb] FunctionEventListener registered.");
-
-        // Phase 3: Patch the function library (needs to happen after world load)
-        // Schedule 1-tick delay to ensure library is populated
-        getServer().getScheduler().runTaskLater(this, () -> {
-            try {
-                Object craftServer = getServer();
-                Object nmsServer = craftServer.getClass().getMethod("getServer").invoke(craftServer);
-                Object functionManager = findField(nmsServer, "functionManager");
-                if (functionManager != null) {
-                    FunctionLibraryPatcher patcher = new FunctionLibraryPatcher(session, getLogger());
-                    int n = patcher.patchLibrary(functionManager);
-                    getLogger().info("[mdb] Phase 3 ready, " + n + " functions instrumented.");
-                } else {
-                    getLogger().warning("[mdb] Could not find functionManager for Phase 3");
-                }
-            } catch (Exception e) {
-                getLogger().warning("[mdb] Phase 3 init failed: " + e.getMessage());
-            }
-        }, 1L);
+        getServer().getPluginManager().registerEvents(new AutoRepatchListener(this, session), this);
+        getLogger().info("[mdb] Listeners registered.");
 
         // Connect to debug server (non-blocking)
         session.connect();
