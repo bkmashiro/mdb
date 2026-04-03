@@ -186,7 +186,13 @@ public class DebugSession {
         CountDownLatch latch = new CountDownLatch(1);
         pauseLatch.set(latch);
         try {
-            boolean resumed = latch.await(breakpointTimeoutSeconds, TimeUnit.SECONDS);
+            boolean resumed;
+            if (breakpointTimeoutSeconds <= 0) {
+                latch.await();  // wait forever
+                resumed = true;
+            } else {
+                resumed = latch.await(breakpointTimeoutSeconds, TimeUnit.SECONDS);
+            }
             if (!resumed) {
                 plugin.getLogger().warning("[mdb] Breakpoint timeout (" + breakpointTimeoutSeconds + "s) — auto-resuming.");
                 stepping = false;

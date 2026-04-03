@@ -2,8 +2,8 @@ debug-server:
   host: localhost
   port: 2525
   reconnect-delay-seconds: 5
-  # Timeout before auto-resuming a paused function (safety net)
-  breakpoint-timeout-seconds: 30
+  # Timeout before auto-resuming a paused function. 0 = wait forever (recommended for single-player)
+  breakpoint-timeout-seconds: 0
 
 logging:
   # Log every function call and command to console (verbose)

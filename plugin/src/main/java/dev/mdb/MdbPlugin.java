@@ -15,7 +15,7 @@ public class MdbPlugin extends JavaPlugin {
 
         String host = getConfig().getString("debug-server.host", "localhost");
         int port = getConfig().getInt("debug-server.port", 2525);
-        int timeout = getConfig().getInt("debug-server.breakpoint-timeout-seconds", 30);
+        int timeout = getConfig().getInt("debug-server.breakpoint-timeout-seconds", 0);  // 0 = wait forever
         boolean traceAll = getConfig().getBoolean("logging.trace-all", false);
 
         session = new DebugSession(this, host, port, timeout, traceAll);
