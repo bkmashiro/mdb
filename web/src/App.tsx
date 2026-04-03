@@ -59,9 +59,11 @@ export function App() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [state.eventLog])
 
-  // Auto-refresh scoreboard when paused
+  // Auto-refresh already-loaded objectives when paused (don't dump all)
   useEffect(() => {
-    if (state.paused && state.pluginConnected) actions.listObjectives()
+    if (state.paused && state.pluginConnected) {
+      Object.keys(state.scoreboardData).forEach(obj => actions.print(obj))
+    }
   }, [state.paused])
 
   // When stopped, if source attached update current view
