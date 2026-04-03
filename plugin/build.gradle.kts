@@ -16,7 +16,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
     // WebSocket client (connects to mdb server)
     implementation("org.java-websocket:Java-WebSocket:1.5.6")
     // JSON

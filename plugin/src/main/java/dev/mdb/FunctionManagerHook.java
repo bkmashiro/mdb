@@ -1,8 +1,8 @@
 package dev.mdb;
 
 import org.bukkit.Bukkit;
-import org.bukkit.craftbukkit.CraftServer;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.Server;
 
 import java.lang.reflect.Field;
 import java.util.logging.Logger;
@@ -27,8 +27,8 @@ public class FunctionManagerHook {
 
     public boolean install() {
         try {
-            // Get the NMS MinecraftServer instance via CraftServer
-            CraftServer craftServer = (CraftServer) Bukkit.getServer();
+            // Get the NMS MinecraftServer instance via CraftServer (using reflection to avoid import)
+            Object craftServer = Bukkit.getServer();
             Object nmsServer = craftServer.getClass()
                     .getMethod("getServer")
                     .invoke(craftServer);
